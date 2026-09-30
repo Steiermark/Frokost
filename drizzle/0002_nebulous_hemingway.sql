@@ -1,0 +1,1 @@
+ALTER TABLE `accounts` ADD `role` text DEFAULT 'employee' NOT NULL;
