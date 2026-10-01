@@ -44,6 +44,18 @@ export async function sendMenuRelease(date:string){
  return {sent,failed,errors};
 }
 
+export async function sendReminderTest(email:string,date:string){
+ if(!pushReady())return {sent:0,failed:0,skipped:'push-not-configured'};
+ const rows=await database().prepare("SELECT s.* FROM push_subscriptions s JOIN accounts a ON a.email=s.email WHERE s.email=? AND a.enabled=1 AND a.password_hash<>''").bind(email).all<Subscription>();
+ let sent=0,failed=0;const tag='test-reminder-'+date+'-'+Date.now().toString(36);
+ for(const row of rows.results){
+  if(!validEndpoint(row.endpoint))continue;
+  const outcome=await deliver(row,date+'#test',{title:'SUF · Fredagsfrokost',body:'Husk at vælge din ret eller melde afbud inden kl. 12 i dag.',date,tag},3600);
+  if(outcome.ok)sent++;else failed++;
+ }
+ return {sent,failed};
+}
+
 export async function sendReminders(now=new Date(),dryRun=false){
  const date=reminderFriday(now);
  if(!date)return {sent:0,failed:0,skipped:'outside-window'};

@@ -297,4 +297,6 @@ test('draft menus stay hidden until an admin releases them and release sends one
  const recall=await menu.POST(request({date,action:'recall'},'mjo@din-energi.dk'));assert.equal(recall.status,200);assert.equal((await recall.json()).recalled,true);
  data=await (await lunch.GET(employeeRead)).json();assert.equal(data.released,false);assert.equal(data.menu.length,0);
  const rerelease=await menu.POST(request({date,action:'release'},'mjo@din-energi.dk'));assert.equal((await rerelease.json()).notifications.sent,2);assert.equal(delivered.length,6);
+ for(const id of ['admin-phone','admin-desktop'])assert.equal((await pushApi.POST(request({action:'subscribe',subscription:await subscription(id)},'mjo@din-energi.dk'))).status,200);
+ const testReminder=await menu.POST(request({date,action:'test-reminder'},'mjo@din-energi.dk'));assert.equal((await testReminder.json()).notifications.sent,2);assert.equal(delivered.length,8);
 });

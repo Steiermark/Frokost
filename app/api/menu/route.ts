@@ -1,7 +1,7 @@
 import {validDishPhoto} from '../../../lib/dish-photo';
 import {database,user,sameOrigin} from '../../../lib/server';
 import {fridays,availableFridays,isClosed} from '../../../lib/lunch';
-import {sendMenuRelease} from '../../../lib/push';
+import {sendMenuRelease,sendReminderTest} from '../../../lib/push';
 export async function POST(request:Request){
  if(!sameOrigin(request))return Response.json({error:'Ugyldig forespørgsel.'},{status:403});
  try{const current=await user(request);if(!current?.admin)return Response.json({error:'Kun administratorer kan ændre menuen.'},{status:403});
@@ -35,6 +35,10 @@ export async function POST(request:Request){
   await database().prepare('DELETE FROM push_deliveries WHERE date=?').bind(date+'#menu').run();
   const notifications=await sendMenuRelease(date);
   return Response.json({success:true,resent:true,notifications});
+ }
+ if(body.action==='test-reminder'){
+  const notifications=await sendReminderTest(current.email,date);
+  return Response.json({success:true,testReminder:true,notifications});
  }
  if(body.action==='remove'&&typeof id==='string'){
  const count=await database().prepare('SELECT COUNT(*) AS n FROM registrations WHERE date=? AND meal=?').bind(date,id).first<{n:number}>();
