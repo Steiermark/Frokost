@@ -39,7 +39,7 @@ function request(body,email='employee@example.com',origin='https://lunch.test'){
  return new Request('https://lunch.test/api/lunch?date=2026-10-02',{method:body?'POST':'GET',headers,...(body?{body:JSON.stringify(body)}:{})});
 }
 const answer={date:'2026-10-02',name:'Test Person',phone:'12 34 56 78',meal:'meal-1',action:'join'};
-beforeEach(()=>{fakeFetch=()=>{throw Error('Network is forbidden in tests');};delete env.REMINDER_SERVICE_TOKEN_HASH;sqlite?.close();sqlite=new DatabaseSync(':memory:');now='2026-09-29T10:00:00Z';for(const f of readdirSync('drizzle').filter(f=>f.endsWith('.sql')).sort())sqlite.exec(readFileSync('drizzle/'+f,'utf8'));sqlite.prepare('INSERT INTO dishes(id,date,name,vegetarian,active) VALUES(?,?,?,?,?)').run('meal-1','2026-10-02','Testret',1,1);});
+beforeEach(()=>{fakeFetch=()=>{throw Error('Network is forbidden in tests');};delete env.REMINDER_SERVICE_TOKEN_HASH;sqlite?.close();sqlite=new DatabaseSync(':memory:');now='2026-09-29T10:00:00Z';for(const f of readdirSync('drizzle').filter(f=>f.endsWith('.sql')).sort())sqlite.exec(readFileSync('drizzle/'+f,'utf8'));sqlite.prepare('INSERT INTO dishes(id,date,name,vegetarian,active) VALUES(?,?,?,?,?)').run('meal-1','2026-10-02','Testret',1,1);sqlite.prepare("INSERT INTO menus(date,source,released) VALUES('2026-10-02','',1)").run();});
 
 
 test('deadline is Wednesday noon in both Danish winter and summer time',()=>{
@@ -112,10 +112,11 @@ test('one supplier is saved for the Friday and survives dish edits',async()=>{
  data=await (await lunch.GET(request())).json();assert.equal(data.menuSource,'');
 });
 test('existing dish supplier is preserved as the shared default',async()=>{
+ sqlite.exec('DELETE FROM menus');
  sqlite.prepare('UPDATE dishes SET source=?').run('Tidligere køkken');
- let data=await (await lunch.GET(request())).json();assert.equal(data.menuSource,'Tidligere køkken');
+ let data=await (await lunch.GET(request(null,'mjo@din-energi.dk'))).json();assert.equal(data.menuSource,'Tidligere køkken');
  await menu.POST(request({date:'2026-10-02',action:'save-source',source:''},'mjo@din-energi.dk'));
- data=await (await lunch.GET(request())).json();assert.equal(data.menuSource,'');
+ data=await (await lunch.GET(request(null,'mjo@din-energi.dk'))).json();assert.equal(data.menuSource,'');
 });
 
 test('dish photo is protected, persisted, kept on name edits and removable',async()=>{
@@ -164,8 +165,11 @@ test('fourth open week accepts its own menu and registration without changing an
  const date='2026-10-30';const dish={date,name:'Fjerde uges ret',vegetarian:false,action:'save'};
  assert.equal((await menu.POST(request(dish,'mjo@din-energi.dk'))).status,200);
  assert.equal((await menu.POST(request({date,action:'save-source',source:'Uge fire køkken'},'mjo@din-energi.dk'))).status,200);
+ const adminRead=new Request('https://lunch.test/api/lunch?date='+date,{headers:request(null,'mjo@din-energi.dk').headers});
+ const draft=await (await lunch.GET(adminRead)).json();assert.equal(draft.menu.length,1);assert.equal(draft.released,false);
+ assert.equal((await menu.POST(request({date,action:'release'},'mjo@din-energi.dk'))).status,200);
  const read=new Request('https://lunch.test/api/lunch?date='+date,{headers:request().headers});
- const data=await (await lunch.GET(read)).json();assert.equal(data.menu.length,1);assert.equal(data.menu[0].name,dish.name);assert.equal(data.menuSource,'Uge fire køkken');
+ const data=await (await lunch.GET(read)).json();assert.equal(data.menu.length,1);assert.equal(data.menu[0].name,dish.name);assert.equal(data.menuSource,'Uge fire køkken');assert.equal(data.released,true);
  assert.equal((await lunch.POST(request({...answer,date,meal:data.menu[0].id}))).status,200);
  assert.equal(sqlite.prepare('SELECT name FROM dishes WHERE id=?').get('meal-1').name,'Testret');
  assert.equal((await menu.POST(request({...dish,date:'2026-11-06'},'mjo@din-energi.dk'))).status,400);
@@ -276,4 +280,17 @@ test('scheduled endpoint rejects unauthenticated jobs and supports a no-send rea
  env.REMINDER_SERVICE_TOKEN_HASH=await server.hash('fixture-job-secret');
  const req=new Request('https://lunch.test/api/push-reminders?check=1',{method:'POST',headers:{'X-SUF-Schedule-Token':'fixture-job-secret'}});
  const result=await pushJob.POST(req);assert.equal(result.status,200);assert.equal((await result.json()).ready,true);
+});
+test('draft menus stay hidden until an admin releases them and release sends one notification per device',async()=>{
+ const date='2026-10-09',dishId='release-meal';
+ assert.equal((await menu.POST(request({date,name:'Frigivet ret',vegetarian:false,action:'save'},'mjo@din-energi.dk'))).status,200);
+ assert.equal((await menu.POST(request({date,source:'Testkøkken',action:'save-source'},'mjo@din-energi.dk'))).status,200);
+ for(const email of ['first@example.com','second@example.com'])assert.equal((await pushApi.POST(request({action:'subscribe',subscription:await subscription(email)},email))).status,200);
+ const employeeRead=new Request('https://lunch.test/api/lunch?date='+date,{headers:request().headers});
+ let data=await (await lunch.GET(employeeRead)).json();assert.equal(data.released,false);assert.equal(data.menu.length,0);assert.equal(data.menuSource,'');
+ assert.equal((await lunch.POST(request({...answer,date,meal:dishId}))).status,409);
+ const delivered=[];fakeFetch=async(url,options)=>{delivered.push({url,body:options.body});return new Response(null,{status:201});};
+ const release=await menu.POST(request({date,action:'release'},'mjo@din-energi.dk'));assert.equal(release.status,200);assert.equal((await release.json()).notifications.sent,2);
+ data=await (await lunch.GET(employeeRead)).json();assert.equal(data.released,true);assert.equal(data.menu[0].name,'Frigivet ret');assert.equal(data.menuSource,'Testkøkken');
+ const again=await menu.POST(request({date,action:'release'},'mjo@din-energi.dk'));assert.equal((await again.json()).alreadyReleased,true);assert.equal(delivered.length,2);
 });

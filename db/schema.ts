@@ -8,7 +8,7 @@ export const reminders=sqliteTable('reminder_deliveries',{id:text('id').primaryK
 
 
 
-export const menus=sqliteTable('menus',{date:text('date').primaryKey(),source:text('source').notNull().default('')});
+export const menus=sqliteTable('menus',{date:text('date').primaryKey(),source:text('source').notNull().default(''),released:integer('released').notNull().default(1)});
 
 
 export const passwordResets=sqliteTable('password_resets',{hash:text('hash').primaryKey(),email:text('email').notNull(),expires:integer('expires').notNull()});

@@ -12,9 +12,11 @@ Glemt adgangskode bruger et engangslink, der udløber efter 30 minutter. En nuls
 
 Den lokale installation og Sites-produktion har separate databaser. Lokal administratoroprettelse opretter ikke en konto i produktion. Sites' ydre adgangspolitik gælder fortsat ved publicering.
 
-## Påmindelser
+## Menuer og påmindelser
 
-Push vælges til på hver enhed. iPhone kræver tilføjelse til hjemmeskærm og iOS 16.4+. Manifest og service worker ligger i public; der caches ikke kontodata. Aktive konti med en push-tilmelding og uden svar (hverken madvalg eller afbud) får én påmindelse pr. enhed/fredag onsdag kl. 11 Europe/Copenhagen. Databasekrav forhindrer dubletter. Fejl logges som failed og sendes ikke automatisk igen for at undgå dobbelte beskeder ved usikker levering; 404/410 fjerner udløbne abonnementer. Push udløber senest kl. 12. Levering afhænger af enhedens tilladelser og forbindelse.
+En ny menu gemmes som kladde. Administratoren kan se og redigere kladden under **Administrer retter** og frigiver den med knappen **Frigiv menu og send notifikation**. Medarbejderne ser først retterne efter frigivelsen. Frigivelsen sender én appnotifikation pr. tilmeldt enhed; gentagne tryk sender ikke samme besked igen.
+
+Påmindelser er valgt som standard på login-siden. Ved login beder browseren om tilladelse, og enheden tilmeldes automatisk, når tilladelsen gives. Valget kan slås fra før login eller senere i appens indstillinger. iPhone kræver tilføjelse til hjemmeskærm og iOS 16.4+. Manifest og service worker ligger i public; der caches ikke kontodata. Aktive konti med en push-tilmelding og uden svar (hverken madvalg eller afbud) får én påmindelse pr. enhed/fredag onsdag kl. 11 Europe/Copenhagen. Databasekrav forhindrer dubletter. Fejl logges som failed og sendes ikke automatisk igen for at undgå dobbelte beskeder ved usikker levering; 404/410 fjerner udløbne abonnementer. Push udløber senest kl. 12. Levering afhænger af enhedens tilladelser og forbindelse.
 
 Runtime kræver VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY (hemmelig), VAPID_SUBJECT og REMINDER_SERVICE_TOKEN_HASH (hemmelig SHA-256). Den sidste er hash af Sites-servicecredentialen til denne Site. Serverens /api/push-reminders kræver den oprindelige credential i X-SUF-Schedule-Token; Sites kræver også OAI-Sites-Authorization: Bearer <credential>. Credentials må aldrig skrives i dokumentation eller tidsplan. Ved rotation skal hashen opdateres før næste kørsel.
 

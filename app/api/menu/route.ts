@@ -1,6 +1,7 @@
 import {validDishPhoto} from '../../../lib/dish-photo';
 import {database,user,sameOrigin} from '../../../lib/server';
 import {fridays,availableFridays,isClosed} from '../../../lib/lunch';
+import {sendMenuRelease} from '../../../lib/push';
 export async function POST(request:Request){
  if(!sameOrigin(request))return Response.json({error:'Ugyldig forespørgsel.'},{status:403});
  try{const current=await user(request);if(!current?.admin)return Response.json({error:'Kun administratorer kan ændre menuen.'},{status:403});
@@ -11,8 +12,16 @@ export async function POST(request:Request){
  if(body.action==='save-source'){
  const source=typeof body.source==='string'?body.source.trim():null;
  if(source===null||source.length>160)return Response.json({error:'Skriv hvor maden kommer fra (højst 160 tegn).'},{status:400});
- await database().prepare('INSERT INTO menus(date,source) VALUES(?,?) ON CONFLICT(date) DO UPDATE SET source=excluded.source').bind(date,source).run();
+ await database().prepare('INSERT INTO menus(date,source,released) VALUES(?,?,0) ON CONFLICT(date) DO UPDATE SET source=excluded.source').bind(date,source).run();
  return Response.json({success:true});
+ }
+ if(body.action==='release'){
+  const dish=await database().prepare('SELECT 1 AS found FROM dishes WHERE date=? AND active=1 LIMIT 1').bind(date).first();
+  if(!dish)return Response.json({error:'Tilføj mindst én ret, før menuen frigives.'},{status:409});
+  const result=await database().prepare("INSERT INTO menus(date,source,released) VALUES(?,'',1) ON CONFLICT(date) DO UPDATE SET released=1 WHERE menus.released=0").bind(date).run();
+  if(!result.meta.changes)return Response.json({success:true,alreadyReleased:true,notifications:{sent:0,failed:0}});
+  const notifications=await sendMenuRelease(date);
+  return Response.json({success:true,released:true,notifications});
  }
  if(body.action==='remove'&&typeof id==='string'){
  const count=await database().prepare('SELECT COUNT(*) AS n FROM registrations WHERE date=? AND meal=?').bind(date,id).first<{n:number}>();
