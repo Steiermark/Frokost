@@ -1,1 +1,25 @@
-{"id":"/","name":"SUF Fredagsfrokost","short_name":"SUF Frokost","lang":"da","start_url":"/","scope":"/","display":"standalone","background_color":"#d6ebe2","theme_color":"#73c6ce","icons":[{"src":"/icon-192.png","sizes":"192x192","type":"image/png"},{"src":"/icon-512.png","sizes":"512x512","type":"image/png"}]}
+{
+  "id": "/",
+  "name": "SUF Fredagsfrokost",
+  "short_name": "SUF Frokost",
+  "lang": "da",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#73c6ce",
+  "icons": [
+    {
+      "src": "/lunch-icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/lunch-icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ]
+}

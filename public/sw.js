@@ -6,7 +6,7 @@ self.addEventListener('push',event=>{
   const local=new Intl.DateTimeFormat('sv-SE',{timeZone:'Europe/Copenhagen',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hourCycle:'h23'}).format(new Date()).replace(' ','T');
   const deadline=new Date(data.date+'T12:00:00Z');deadline.setUTCDate(deadline.getUTCDate()-2);
   if(local>=deadline.toISOString().slice(0,10)+'T12:00')return;
-  await self.registration.showNotification(data.title,{body:data.body,icon:'/icon-192.png',badge:'/favicon.svg',tag:data.tag,data:{url:'/'}});
+  await self.registration.showNotification(data.title,{body:data.body,icon:'/lunch-icon-192.png',badge:'/favicon.svg',tag:data.tag,data:{url:'/'}});
  })());
 });
 self.addEventListener('notificationclick',event=>{
