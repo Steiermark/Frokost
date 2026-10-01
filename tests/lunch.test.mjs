@@ -293,7 +293,8 @@ test('draft menus stay hidden until an admin releases them and release sends one
  const release=await menu.POST(request({date,action:'release'},'mjo@din-energi.dk'));assert.equal(release.status,200);assert.equal((await release.json()).notifications.sent,2);
  data=await (await lunch.GET(employeeRead)).json();assert.equal(data.released,true);assert.equal(data.menu[0].name,'Frigivet ret');assert.equal(data.menuSource,'Testkøkken');
  const again=await menu.POST(request({date,action:'release'},'mjo@din-energi.dk'));assert.equal((await again.json()).alreadyReleased,true);assert.equal(delivered.length,2);
+ const resend=await menu.POST(request({date,action:'resend'},'mjo@din-energi.dk'));assert.equal((await resend.json()).notifications.sent,2);assert.equal(delivered.length,4);
  const recall=await menu.POST(request({date,action:'recall'},'mjo@din-energi.dk'));assert.equal(recall.status,200);assert.equal((await recall.json()).recalled,true);
  data=await (await lunch.GET(employeeRead)).json();assert.equal(data.released,false);assert.equal(data.menu.length,0);
- const rerelease=await menu.POST(request({date,action:'release'},'mjo@din-energi.dk'));assert.equal((await rerelease.json()).notifications.sent,2);assert.equal(delivered.length,4);
+ const rerelease=await menu.POST(request({date,action:'release'},'mjo@din-energi.dk'));assert.equal((await rerelease.json()).notifications.sent,2);assert.equal(delivered.length,6);
 });

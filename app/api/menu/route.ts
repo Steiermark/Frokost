@@ -29,6 +29,13 @@ export async function POST(request:Request){
   ]);
   return Response.json({success:true,recalled:!!result[0].meta.changes});
  }
+ if(body.action==='resend'){
+  const released=await database().prepare('SELECT 1 AS found FROM menus WHERE date=? AND released=1').bind(date).first();
+  if(!released)return Response.json({error:'Frigiv menuen, før notifikationen sendes.'},{status:409});
+  await database().prepare('DELETE FROM push_deliveries WHERE date=?').bind(date+'#menu').run();
+  const notifications=await sendMenuRelease(date);
+  return Response.json({success:true,resent:true,notifications});
+ }
  if(body.action==='remove'&&typeof id==='string'){
  const count=await database().prepare('SELECT COUNT(*) AS n FROM registrations WHERE date=? AND meal=?').bind(date,id).first<{n:number}>();
  if(count?.n)return Response.json({error:'Retten har tilmeldinger og kan ikke fjernes.'},{status:409});
