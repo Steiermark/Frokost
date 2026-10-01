@@ -1,3 +1,6 @@
+import {createHash} from 'node:crypto';
+import * as bcrypt from 'bcryptjs';
+import * as webpush from '@block65/webcrypto-web-push';
 import assert from 'node:assert/strict';
 import {test,beforeEach} from 'node:test';
 import {DatabaseSync} from 'node:sqlite';
@@ -8,7 +11,7 @@ import ts from 'typescript';
 
 let now='2026-09-29T10:00:00Z';
 class Clock extends Date { constructor(...args){super(...(args.length?args:[now]));} static now(){return new Date(now).getTime();} }
-let sqlite;
+let sqlite;let fakeFetch=()=>{throw Error("Network is forbidden in tests");};
 const env={ADMIN_EMAILS:'mjo@din-energi.dk',DB:{
  prepare(sql){let values=[];return {
   bind(...args){values=args;return this;},
@@ -21,22 +24,24 @@ const env={ADMIN_EMAILS:'mjo@din-energi.dk',DB:{
 const cache=new Map();
 function load(file){file=path.resolve(file);if(cache.has(file))return cache.get(file);const exports={};cache.set(file,exports);
  const code=ts.transpileModule(readFileSync(file,'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText;
- vm.runInNewContext(code,{exports,require:(name)=>name==='cloudflare:workers'?{env}:load(path.resolve(path.dirname(file),name+'.ts')),Date:Clock,Intl,Response,Request,URL,crypto,TextEncoder,Uint8Array,atob,console,fetch:()=>{throw Error('Network is forbidden in tests');}});
+ vm.runInNewContext(code,{exports,require:(name)=>name==='cloudflare:workers'?{env}:name==='bcryptjs'?bcrypt:name==='@block65/webcrypto-web-push'?webpush:load(path.resolve(path.dirname(file),name+'.ts')),Date:Clock,Intl,Response,Request,URL,crypto,TextEncoder,Uint8Array,atob,AbortSignal,console,fetch:(...args)=>fakeFetch(...args)});
  return exports;
 }
-const lunch=load('app/api/lunch/route.ts');const menu=load('app/api/menu/route.ts');const server=load('lib/server.ts');const dates=load('lib/lunch.ts');const phone=load('lib/phone.ts');const reminders=load('app/api/reminders/route.ts');
+const lunch=load('app/api/lunch/route.ts');const menu=load('app/api/menu/route.ts');const server=load('lib/server.ts');const dates=load('lib/lunch.ts');const reminders=load('app/api/reminders/route.ts');
 function request(body,email='employee@example.com',origin='https://lunch.test'){
  const headers={'content-type':'application/json',origin};
- if(email){headers['oai-authenticated-user-id']='test-'+email;headers['oai-authenticated-user-email']=email;}
+ if(email){
+ const token=createHash('sha256').update('test-session-'+email).digest('hex');
+ sqlite.prepare("INSERT INTO accounts(email,name,role,password_hash,reminders) VALUES(?,'',?,'test-hash',0) ON CONFLICT(email) DO NOTHING").run(email,email==='mjo@din-energi.dk'?'admin':'employee');
+ sqlite.prepare("INSERT INTO sessions(hash,email,expires,auth_method) VALUES(?,?,?,'password') ON CONFLICT(hash) DO UPDATE SET expires=excluded.expires").run(createHash('sha256').update(token).digest('hex'),email,Date.now()+86400000*500);
+ headers.cookie='suf_password_session='+token;
+}
  return new Request('https://lunch.test/api/lunch?date=2026-10-02',{method:body?'POST':'GET',headers,...(body?{body:JSON.stringify(body)}:{})});
 }
 const answer={date:'2026-10-02',name:'Test Person',phone:'12 34 56 78',meal:'meal-1',action:'join'};
-beforeEach(()=>{sqlite?.close();sqlite=new DatabaseSync(':memory:');now='2026-09-29T10:00:00Z';for(const f of readdirSync('drizzle').filter(f=>f.endsWith('.sql')).sort())sqlite.exec(readFileSync('drizzle/'+f,'utf8'));sqlite.prepare('INSERT INTO dishes(id,date,name,vegetarian,active) VALUES(?,?,?,?,?)').run('meal-1','2026-10-02','Testret',1,1);});
+beforeEach(()=>{fakeFetch=()=>{throw Error('Network is forbidden in tests');};delete env.REMINDER_SERVICE_TOKEN_HASH;sqlite?.close();sqlite=new DatabaseSync(':memory:');now='2026-09-29T10:00:00Z';for(const f of readdirSync('drizzle').filter(f=>f.endsWith('.sql')).sort())sqlite.exec(readFileSync('drizzle/'+f,'utf8'));sqlite.prepare('INSERT INTO dishes(id,date,name,vegetarian,active) VALUES(?,?,?,?,?)').run('meal-1','2026-10-02','Testret',1,1);});
 
-test('Danish and international phone numbers are validated',()=>{
- assert.equal(phone.normalizePhone('12 34 56 78'),'+4512345678');assert.equal(phone.normalizePhone('0045 12345678'),'+4512345678');assert.equal(phone.normalizePhone('+49 151 12345678'),'+4915112345678');
- for(const invalid of ['',null,'123','+451234567','abc','+000000000'])assert.equal(phone.normalizePhone(invalid),null);
-});
+
 test('deadline is Wednesday noon in both Danish winter and summer time',()=>{
  for(const [friday,before,closed] of [['2026-10-02','2026-09-30T09:59:59Z','2026-09-30T10:00:00Z'],['2026-10-30','2026-10-28T10:59:59Z','2026-10-28T11:00:00Z'],['2026-04-03','2026-04-01T09:59:59Z','2026-04-01T10:00:00Z']]){
  assert.equal(dates.isClosed(friday,new Date(before)),false);assert.equal(dates.isClosed(friday,new Date(closed)),true);}
@@ -44,9 +49,10 @@ test('deadline is Wednesday noon in both Danish winter and summer time',()=>{
 test('anonymous writes and cross-origin writes are rejected',async()=>{
  assert.equal((await lunch.POST(request(answer,null))).status,401);assert.equal((await lunch.POST(request(answer,'employee@example.com','https://other.test'))).status,403);
 });
-test('join persists a normalized phone and excludes it from shared data',async()=>{
+test('join persists without collecting a phone number',async()=>{
+
  assert.equal((await lunch.POST(request(answer))).status,200);
- assert.equal(sqlite.prepare('SELECT phone FROM accounts').get().phone,'+4512345678');
+ 
  const data=await (await lunch.GET(request())).json();assert.equal(data.registrations.length,1);assert.equal(data.mine.status,'attending');assert.equal(JSON.stringify(data).includes('+4512345678'),false);
 });
 test('decline replaces a join without duplicates and can change back',async()=>{
@@ -61,8 +67,9 @@ test('decline works without a menu, join requires an active dish for that Friday
  assert.equal((await lunch.POST(request({...answer,action:'decline',meal:''}))).status,200);
 });
 test('failed dish validation does not change the existing profile or answer',async()=>{
+
  await lunch.POST(request(answer));assert.equal((await lunch.POST(request({...answer,name:'Changed',phone:'87654321',meal:'missing'}))).status,409);
- assert.equal(sqlite.prepare('SELECT phone FROM accounts').get().phone,'+4512345678');assert.equal(sqlite.prepare('SELECT meal FROM registrations').get().meal,'meal-1');
+ assert.equal(sqlite.prepare('SELECT meal FROM registrations').get().meal,'meal-1');
 });
 test('server enforces deadline on join and decline',async()=>{
  now='2026-09-30T10:00:00Z';for(const action of ['join','decline'])assert.equal((await lunch.POST(request({...answer,action}))).status,409);
@@ -76,17 +83,19 @@ test('account defaults never grant admin and reminders cannot send',async()=>{
  assert.equal((await server.user(request())).admin,false);assert.equal((await server.user(request(null,'mjo@din-energi.dk'))).admin,true);assert.equal((await reminders.POST()).status,410);
 });
 
-test('a stable platform identity retains its answer after an email change',async()=>{
- await lunch.POST(request(answer));
- const changed=request(null,'renamed@example.com');changed.headers.set('oai-authenticated-user-id','test-employee@example.com');
- const data=await (await lunch.GET(changed)).json();assert.equal(data.mine.status,'attending');assert.equal(sqlite.prepare('SELECT COUNT(*) AS n FROM accounts').get().n,1);
+test('platform headers alone cannot bypass password login',async()=>{
+ const req=new Request('https://lunch.test/api/lunch',{headers:{'oai-authenticated-user-id':'local_seedy','oai-authenticated-user-email':'mjo@din-energi.dk'}});
+ assert.equal(await server.user(req),null);assert.equal((await lunch.GET(req)).status,401);
 });
 test('another employee cannot overwrite an existing answer',async()=>{
  await lunch.POST(request(answer));await lunch.POST(request({...answer,name:'Other Person',action:'decline'},'other@example.com'));
  const data=await (await lunch.GET(request())).json();assert.equal(data.mine.status,'attending');assert.equal(data.mine.name,'Test Person');assert.equal(sqlite.prepare('SELECT COUNT(*) AS n FROM registrations').get().n,2);
 });
-test('invalid phone never saves a response',async()=>{
- assert.equal((await lunch.POST(request({...answer,phone:'123'}))).status,400);assert.equal(sqlite.prepare('SELECT COUNT(*) AS n FROM registrations').get().n,0);
+test('lunch accepts a choice without a phone number',async()=>{
+
+ const {phone:ignored,...withoutPhone}=answer;assert.equal((await lunch.POST(request(withoutPhone))).status,200);
+ assert.equal((await lunch.POST(request({...answer,phone:'87654321'}))).status,200);
+ 
 });
 
 test('one supplier is saved for the Friday and survives dish edits',async()=>{
@@ -143,4 +152,128 @@ test('saved choices cannot be changed or declined at or after Wednesday noon',as
   const saved=sqlite.prepare('SELECT name,meal,status FROM registrations').get();
   assert.equal(saved.name,answer.name);assert.equal(saved.meal,answer.meal);assert.equal(saved.status,'attending');
  }
+});
+
+test('planning shows four open Fridays after Wednesday noon and across year end',()=>{
+ assert.equal(dates.openFridays(new Date('2026-10-01T08:00:00Z')).join(','),'2026-10-09,2026-10-16,2026-10-23,2026-10-30');
+ assert.equal(dates.openFridays(new Date('2026-09-30T09:59:59Z'))[0],'2026-10-02');
+ assert.equal(dates.openFridays(new Date('2026-12-30T12:00:00Z')).join(','),'2027-01-08,2027-01-15,2027-01-22,2027-01-29');
+});
+test('fourth open week accepts its own menu and registration without changing another week',async()=>{
+ now='2026-10-01T08:00:00Z';
+ const date='2026-10-30';const dish={date,name:'Fjerde uges ret',vegetarian:false,action:'save'};
+ assert.equal((await menu.POST(request(dish,'mjo@din-energi.dk'))).status,200);
+ assert.equal((await menu.POST(request({date,action:'save-source',source:'Uge fire køkken'},'mjo@din-energi.dk'))).status,200);
+ const read=new Request('https://lunch.test/api/lunch?date='+date,{headers:request().headers});
+ const data=await (await lunch.GET(read)).json();assert.equal(data.menu.length,1);assert.equal(data.menu[0].name,dish.name);assert.equal(data.menuSource,'Uge fire køkken');
+ assert.equal((await lunch.POST(request({...answer,date,meal:data.menu[0].id}))).status,200);
+ assert.equal(sqlite.prepare('SELECT name FROM dishes WHERE id=?').get('meal-1').name,'Testret');
+ assert.equal((await menu.POST(request({...dish,date:'2026-11-06'},'mjo@din-energi.dk'))).status,400);
+});
+
+const auth=load('app/api/auth/route.ts');
+const accounts=load('app/api/accounts/route.ts');
+test('only admins create accounts, passwords stay hashed and duplicate creation cannot overwrite',async()=>{
+ const body={action:'create',name:'New admin',email:'new@example.com',role:'admin',phone:'12 34 56 78',password:'Test12'};
+ assert.equal((await accounts.GET(request(null,null))).status,403);
+ assert.equal((await accounts.POST(request(body))).status,403);
+ assert.equal((await accounts.POST(request({...body,password:'12345'},'mjo@din-energi.dk'))).status,400);
+
+ assert.equal((await accounts.POST(request(body,'mjo@din-energi.dk'))).status,200);
+ const row=sqlite.prepare('SELECT * FROM accounts WHERE email=?').get(body.email);
+ assert.equal(row.role,'admin');assert.ok(await bcrypt.compare(body.password,row.password_hash));assert.notEqual(row.password_hash,body.password);
+ const listed=await (await accounts.GET(request(null,'mjo@din-energi.dk'))).text();assert.ok(!listed.includes(row.password_hash));
+ assert.equal((await accounts.POST(request({...body,role:'employee'},'mjo@din-energi.dk'))).status,409);
+ assert.equal(sqlite.prepare('SELECT role FROM accounts WHERE email=?').get(body.email).role,'admin');
+});
+test('password login uses database role and logout revokes session',async()=>{
+ const password='Fixture-password-123';
+ sqlite.prepare("INSERT INTO accounts(email,name,role,password_hash) VALUES(?,'Login test',?,?)").run('login@example.com','employee',await bcrypt.hash(password,4));
+ assert.equal((await auth.POST(request({action:'login',email:'login@example.com',password:'wrong'},null))).status,401);
+ const login=await auth.POST(request({action:'login',email:'login@example.com',password,role:'admin'},null));assert.equal(login.status,200);
+ const cookie=login.headers.get('set-cookie');assert.ok(cookie.includes('HttpOnly'));assert.ok(cookie.includes('Secure'));
+ const req=new Request('https://lunch.test/api/auth',{headers:{cookie}});assert.equal((await server.user(req)).admin,false);
+ const out=new Request(req.url,{method:'POST',headers:{cookie,origin:'https://lunch.test'},body:JSON.stringify({action:'logout'})});assert.equal((await auth.POST(out)).status,200);assert.equal(await server.user(req),null);
+});
+test('reset tokens expire, are single use and revoke existing sessions',async()=>{
+ request(null,'reset@example.com');const token='a'.repeat(64),hashed=await server.hash(token);
+ sqlite.prepare('INSERT INTO password_resets(hash,email,expires) VALUES(?,?,?)').run(hashed,'reset@example.com',Clock.now()+60000);
+ const body={action:'reset',token,password:'New123'};
+ assert.equal((await auth.POST(request({...body,password:'12345'},null))).status,400);
+ assert.equal((await auth.POST(request(body,null))).status,200);
+ assert.equal(sqlite.prepare('SELECT COUNT(*) AS n FROM sessions WHERE email=?').get('reset@example.com').n,0);
+ assert.ok(await bcrypt.compare(body.password,sqlite.prepare('SELECT password_hash FROM accounts WHERE email=?').get('reset@example.com').password_hash));
+ assert.equal((await auth.POST(request(body,null))).status,400);
+ sqlite.prepare('INSERT INTO password_resets(hash,email,expires) VALUES(?,?,?)').run(hashed,'reset@example.com',Clock.now()-1);
+ assert.equal((await auth.POST(request(body,null))).status,400);
+});
+test('legacy login and missing mail service never bypass authentication',async()=>{
+ assert.equal((await auth.POST(request({action:'verify',token:'x'},null))).status,400);
+ assert.equal((await auth.POST(request({action:'forgot',email:'mjo@din-energi.dk'},null))).status,503);
+ assert.equal(await server.user(new Request('https://lunch.test',{headers:{cookie:'suf_session='+'a'.repeat(64)}})),null);
+});
+
+
+test('only admins remove accounts; removal revokes access but retains lunch choices',async()=>{
+ await lunch.POST(request(answer));
+ const victim=request(null);const body={action:'remove',email:'employee@example.com'};
+ sqlite.prepare('INSERT INTO password_resets(hash,email,expires) VALUES(?,?,?)').run('reset-fixture',body.email,Clock.now()+60000);
+ assert.equal((await accounts.POST(request(body,null))).status,403);
+ assert.equal((await accounts.POST(request(body))).status,403);
+ assert.equal((await accounts.POST(request(body,'mjo@din-energi.dk','https://other.test'))).status,403);
+ assert.equal((await accounts.POST(request(body,'mjo@din-energi.dk'))).status,200);
+ assert.equal(await server.user(victim),null);
+ assert.equal(sqlite.prepare('SELECT COUNT(*) AS n FROM accounts WHERE email=?').get(body.email).n,0);
+ assert.equal(sqlite.prepare('SELECT COUNT(*) AS n FROM password_resets WHERE email=?').get(body.email).n,0);
+ assert.equal(sqlite.prepare('SELECT COUNT(*) AS n FROM sessions WHERE email=?').get(body.email).n,0);
+ assert.equal(sqlite.prepare('SELECT COUNT(*) AS n FROM registrations').get().n,1);
+});
+test('an administrator can be removed but the last usable administrator is protected',async()=>{
+ const admin=request(null,'mjo@din-energi.dk');
+ const body={action:'remove',email:'mjo@din-energi.dk'};
+ assert.equal((await accounts.POST(request(body,body.email))).status,409);
+ sqlite.prepare("INSERT INTO accounts(email,name,role,password_hash) VALUES('second@example.com','Second','admin','')").run();
+ assert.equal((await accounts.POST(request(body,body.email))).status,409);
+ sqlite.prepare("UPDATE accounts SET password_hash='test-hash' WHERE email='second@example.com'").run();
+ assert.equal((await accounts.POST(request(body,body.email))).status,200);
+ assert.equal(await server.user(admin),null);
+ assert.equal((await accounts.POST(request({action:'remove',email:'second@example.com'},'second@example.com'))).status,409);
+});
+const push=load('lib/push.ts'),pushApi=load('app/api/push/route.ts'),pushJob=load('app/api/push-reminders/route.ts');
+const vapid=await crypto.subtle.generateKey({name:'ECDSA',namedCurve:'P-256'},true,['sign','verify']);
+const vapidPrivate=await crypto.subtle.exportKey('jwk',vapid.privateKey);
+env.VAPID_PUBLIC_KEY=Buffer.from(await crypto.subtle.exportKey('raw',vapid.publicKey)).toString('base64url');env.VAPID_PRIVATE_KEY=vapidPrivate.d;env.VAPID_SUBJECT='mailto:test@example.com';
+async function subscription(id){const pair=await crypto.subtle.generateKey({name:'ECDH',namedCurve:'P-256'},true,['deriveBits']);return {endpoint:'https://fcm.googleapis.com/fcm/send/'+id,keys:{p256dh:Buffer.from(await crypto.subtle.exportKey('raw',pair.publicKey)).toString('base64url'),auth:Buffer.from(crypto.getRandomValues(new Uint8Array(16))).toString('base64url')}};}
+test('push subscription requires login and origin; rejects arbitrary outbound endpoints',async()=>{
+ const sub=await subscription('test');
+ assert.equal((await pushApi.POST(request({action:'subscribe',subscription:sub},null))).status,401);
+ assert.equal((await pushApi.POST(request({action:'subscribe',subscription:sub},'employee@example.com','https://other.test'))).status,403);
+ for(const endpoint of ['http://fcm.googleapis.com/a','https://127.0.0.1/a','https://fcm.googleapis.com.evil.test/a','https://user@fcm.googleapis.com/a'])assert.equal((await pushApi.POST(request({action:'subscribe',subscription:{...sub,endpoint}}))).status,400);
+ assert.equal((await pushApi.POST(request({action:'subscribe',subscription:sub}))).status,200);
+ assert.equal((await pushApi.POST(request({action:'remove',endpoint:sub.endpoint},'other@example.com'))).status,200);
+ assert.equal(sqlite.prepare('SELECT COUNT(*) AS n FROM push_subscriptions').get().n,1);
+ assert.equal((await pushApi.POST(request({action:'remove',endpoint:sub.endpoint}))).status,200);
+ assert.equal(sqlite.prepare('SELECT COUNT(*) AS n FROM push_subscriptions').get().n,0);
+});
+test('push reminder follows Copenhagen summer/winter time and closes at noon',()=>{
+ assert.equal(push.reminderFriday(new Date('2026-10-07T09:00:00Z')),'2026-10-09');
+ assert.equal(push.reminderFriday(new Date('2026-10-28T10:00:00Z')),'2026-10-30');
+ for(const time of ['2026-10-07T08:59:59Z','2026-10-07T10:00:00Z','2026-10-06T09:00:00Z'])assert.equal(push.reminderFriday(new Date(time)),null);
+});
+test('reminders only reach subscribed unanswered accounts, send encrypted payload once and expire dead endpoints',async()=>{
+ now='2026-09-30T09:00:00Z';
+ for(const email of ['waiting@example.com','joined@example.com','declined@example.com','dead@example.com']){
+  assert.equal((await pushApi.POST(request({action:'subscribe',subscription:await subscription(email)},email))).status,200);
+ }
+ await lunch.POST(request(answer,'joined@example.com'));await lunch.POST(request({...answer,action:'decline'},'declined@example.com'));
+ const sent=[];fakeFetch=async(url,options)=>{sent.push(url);assert.equal(options.redirect,'error');assert.ok(options.body);return new Response(null,{status:url.includes('dead@')?410:201});};
+ const result=await push.sendReminders();assert.equal(result.sent,1);assert.equal(result.failed,1);assert.equal(sent.length,2);assert.ok(sent.every(u=>!u.includes('joined@')&&!u.includes('declined@')));
+ assert.equal(sqlite.prepare("SELECT COUNT(*) AS n FROM push_subscriptions WHERE email='dead@example.com'").get().n,0);
+ assert.equal((await push.sendReminders()).sent,0);assert.equal(sent.length,2);
+});
+test('scheduled endpoint rejects unauthenticated jobs and supports a no-send readiness check',async()=>{
+ assert.equal((await pushJob.POST(request({},null))).status,403);
+ env.REMINDER_SERVICE_TOKEN_HASH=await server.hash('fixture-job-secret');
+ const req=new Request('https://lunch.test/api/push-reminders?check=1',{method:'POST',headers:{'X-SUF-Schedule-Token':'fixture-job-secret'}});
+ const result=await pushJob.POST(req);assert.equal(result.status,200);assert.equal((await result.json()).ready,true);
 });

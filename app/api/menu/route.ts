@@ -1,13 +1,13 @@
 import {validDishPhoto} from '../../../lib/dish-photo';
 import {database,user,sameOrigin} from '../../../lib/server';
-import {fridays,isClosed} from '../../../lib/lunch';
+import {fridays,availableFridays,isClosed} from '../../../lib/lunch';
 export async function POST(request:Request){
  if(!sameOrigin(request))return Response.json({error:'Ugyldig forespørgsel.'},{status:403});
  try{const current=await user(request);if(!current?.admin)return Response.json({error:'Kun administratorer kan ændre menuen.'},{status:403});
  if(Number(request.headers.get('content-length')||0)>300000)return Response.json({error:'Fotoet er for stort.'},{status:413});
  const raw=await request.text();if(raw.length>300000)return Response.json({error:'Fotoet er for stort.'},{status:413});
  const body=JSON.parse(raw) as Record<string,unknown>;const {date,id}=body;const name=typeof body.name==='string'?body.name.trim():'';
- if(typeof date!=='string'||!fridays().includes(date)||isClosed(date))return Response.json({error:'Vælg en fredag, hvor fristen ikke er overskredet.'},{status:400});
+ if(typeof date!=='string'||!availableFridays().includes(date)||isClosed(date))return Response.json({error:'Vælg en fredag, hvor fristen ikke er overskredet.'},{status:400});
  if(body.action==='save-source'){
  const source=typeof body.source==='string'?body.source.trim():null;
  if(source===null||source.length>160)return Response.json({error:'Skriv hvor maden kommer fra (højst 160 tegn).'},{status:400});
@@ -28,6 +28,7 @@ export async function POST(request:Request){
  }return Response.json({success:true});
  }catch{return Response.json({error:'Menuen kunne ikke gemmes.'},{status:503});}
 }
+
 
 
 

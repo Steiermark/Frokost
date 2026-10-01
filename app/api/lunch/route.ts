@@ -1,13 +1,13 @@
 import {database,user,sameOrigin} from '../../../lib/server';
-import {fridays,isClosed} from '../../../lib/lunch';
-import {normalizePhone} from '../../../lib/phone';
+import {fridays,availableFridays,isClosed} from '../../../lib/lunch';
+
 
 export async function GET(request:Request) {
  try {
   const current=await user(request);
   if(!current)return Response.json({error:'Log ind for at se frokosten.'},{status:401});
   const date=new URL(request.url).searchParams.get('date')||fridays()[0];
-  if(!fridays().includes(date))return Response.json({error:'Vælg en kommende fredag.'},{status:400});
+  if(!availableFridays().includes(date))return Response.json({error:'Vælg en kommende fredag.'},{status:400});
   const menu=await database().prepare('SELECT id,name,vegetarian,CASE WHEN length(photo)>0 THEN 1 ELSE 0 END AS hasPhoto,photo_version AS photoVersion FROM dishes WHERE date=? AND active=1 ORDER BY rowid').bind(date).all();
   const savedMenu=await database().prepare('SELECT source FROM menus WHERE date=?').bind(date).first<{source:string}>();
   // Preserve a single previously recorded supplier until the shared field is saved.
@@ -27,22 +27,23 @@ export async function POST(request:Request) {
   const body=await request.json() as Record<string,unknown>;
   const {date,meal,action}=body;
   const name=typeof body.name==='string'?body.name.trim().replace(/\s+/g,' '):'';
-  const phone=normalizePhone(body.phone);
-  if(typeof date!=='string'||!fridays().includes(date)||!['join','decline'].includes(String(action)))return Response.json({error:'Vælg en kommende fredag og et svar.'},{status:400});
+
+  if(typeof date!=='string'||!availableFridays().includes(date)||!['join','decline'].includes(String(action)))return Response.json({error:'Vælg en kommende fredag og et svar.'},{status:400});
   if(isClosed(date))return Response.json({error:'Fristen var onsdag kl. 12. Tilmeldingen er lukket.'},{status:409});
-  if(!name||name.length>80||!phone)return Response.json({error:'Udfyld navn og et gyldigt telefonnummer, fx 12 34 56 78.'},{status:400});
+  if(!name||name.length>80)return Response.json({error:'Udfyld dit fulde navn.'},{status:400});
   if(action==='join'&&typeof meal!=='string')return Response.json({error:'Vælg en ret.'},{status:400});
   const status=action==='join'?'attending':'declined';
   const chosenMeal=action==='join'?meal as string:'';
   // Validate the dish within the upsert. D1 commits the answer and profile atomically.
   const result=await database().batch([
    database().prepare("INSERT INTO registrations(id,date,name,normalized_name,meal,status) SELECT ?,?,?,?,?,? WHERE ?='declined' OR EXISTS(SELECT 1 FROM dishes WHERE id=? AND date=? AND active=1) ON CONFLICT(date,normalized_name) DO UPDATE SET name=excluded.name,meal=excluded.meal,status=excluded.status").bind(crypto.randomUUID(),date,name,current.email,chosenMeal,status,status,chosenMeal,date),
-   database().prepare('UPDATE accounts SET name=?,phone=? WHERE email=? AND changes()>0').bind(name,phone,current.email)
+   database().prepare('UPDATE accounts SET name=? WHERE email=? AND changes()>0').bind(name,current.email)
   ]);
   if(!result[0].meta.changes)return Response.json({error:'Retten kan ikke længere vælges. Hent menuen igen.'},{status:409});
   return Response.json({success:true,status});
  }catch{return Response.json({error:'Ændringen kunne ikke gemmes. Prøv igen.'},{status:503});}
 }
+
 
 
 
