@@ -19,9 +19,8 @@ export async function POST(request:Request){
   const dish=await database().prepare('SELECT 1 AS found FROM dishes WHERE date=? AND active=1 LIMIT 1').bind(date).first();
   if(!dish)return Response.json({error:'Tilføj mindst én ret, før menuen frigives.'},{status:409});
   const result=await database().prepare("INSERT INTO menus(date,source,released) VALUES(?,'',1) ON CONFLICT(date) DO UPDATE SET released=1 WHERE menus.released=0").bind(date).run();
-  if(!result.meta.changes)return Response.json({success:true,alreadyReleased:true,notifications:{sent:0,failed:0}});
   const notifications=await sendMenuRelease(date);
-  return Response.json({success:true,released:true,notifications});
+  return Response.json({success:true,released:true,alreadyReleased:!result.meta.changes,notifications});
  }
  if(body.action==='remove'&&typeof id==='string'){
  const count=await database().prepare('SELECT COUNT(*) AS n FROM registrations WHERE date=? AND meal=?').bind(date,id).first<{n:number}>();

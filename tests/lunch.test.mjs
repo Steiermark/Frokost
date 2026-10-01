@@ -270,7 +270,7 @@ test('reminders only reach subscribed unanswered accounts, send encrypted payloa
   assert.equal((await pushApi.POST(request({action:'subscribe',subscription:await subscription(email)},email))).status,200);
  }
  await lunch.POST(request(answer,'joined@example.com'));await lunch.POST(request({...answer,action:'decline'},'declined@example.com'));
- const sent=[];fakeFetch=async(url,options)=>{sent.push(url);assert.equal(options.redirect,'error');assert.ok(options.body);return new Response(null,{status:url.includes('dead@')?410:201});};
+ const sent=[];fakeFetch=async(url,options)=>{sent.push(url);assert.equal(options.redirect,'manual');assert.ok(options.body);return new Response(null,{status:url.includes('dead@')?410:201});};
  const result=await push.sendReminders();assert.equal(result.sent,1);assert.equal(result.failed,1);assert.equal(sent.length,2);assert.ok(sent.every(u=>!u.includes('joined@')&&!u.includes('declined@')));
  assert.equal(sqlite.prepare("SELECT COUNT(*) AS n FROM push_subscriptions WHERE email='dead@example.com'").get().n,0);
  assert.equal((await push.sendReminders()).sent,0);assert.equal(sent.length,2);
