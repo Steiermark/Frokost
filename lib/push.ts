@@ -31,13 +31,14 @@ async function deliver(row:Subscription,dateKey:string,data:{title:string;body:s
 export async function sendMenuRelease(date:string){
  if(!pushReady())return {sent:0,failed:0,skipped:'push-not-configured'};
  const dateKey=date+'#menu';
+ const notificationTag='menu-'+date+'-'+Date.now().toString(36);
  const rows=await database().prepare("SELECT s.* FROM push_subscriptions s JOIN accounts a ON a.email=s.email LEFT JOIN push_deliveries d ON d.subscription=s.id AND d.date=? WHERE a.enabled=1 AND a.password_hash<>'' AND (d.id IS NULL OR d.status LIKE 'failed%')").bind(dateKey).all<Subscription>();
  let sent=0,failed=0;const errors:Array<{status?:number;reason?:string}>=[];
  for(const row of rows.results){
   if(!validEndpoint(row.endpoint))continue;
   const claim=await database().prepare("INSERT INTO push_deliveries(id,date,subscription,status,created) VALUES(?,?,?,'claimed',?) ON CONFLICT(date,subscription) DO UPDATE SET status='claimed',created=excluded.created WHERE push_deliveries.status LIKE 'failed%'").bind(crypto.randomUUID(),dateKey,row.id,Date.now()).run();
   if(!claim.meta.changes)continue;
-  const outcome=await deliver(row,dateKey,{title:'SUF · Fredagsfrokost',body:'Menuen til fredag den '+dateLabel(date)+' er klar. Åbn appen og vælg din ret.',date,tag:'menu-'+date},7*24*3600);
+  const outcome=await deliver(row,dateKey,{title:'SUF · Fredagsfrokost',body:'Menuen til fredag den '+dateLabel(date)+' er klar. Åbn appen og vælg din ret.',date,tag:notificationTag},7*24*3600);
   if(outcome.ok)sent++;else{failed++;errors.push({status:outcome.status,reason:outcome.reason});}
  }
  return {sent,failed,errors};
