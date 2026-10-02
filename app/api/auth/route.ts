@@ -2,7 +2,7 @@ import {database,hash,secret,user,sameOrigin,mailReady,sendMail,origin,setting} 
 import {passwordError,passwordHash,passwordMatches,emailValue,validEmail,allowedAttempt,sessionCookie} from '../../../lib/passwords';
 const noStore={'Cache-Control':'no-store'};
 const genericReset='Hvis adressen har adgang, får du en mail med et link til at vælge en ny adgangskode.';
-export async function GET(request:Request){try{return Response.json({user:await user(request),mailReady:mailReady()},{headers:noStore});}catch{return Response.json({error:'Login kunne ikke hentes.'},{status:503,headers:noStore});}}
+export async function GET(request:Request){try{const admins=await database().prepare("SELECT name FROM accounts WHERE role='admin' AND enabled=1 AND password_hash<>'' AND name<>'' ORDER BY name COLLATE NOCASE LIMIT 2").all<{name:string}>();return Response.json({user:await user(request),mailReady:mailReady(),supportAdmins:admins.results.map(a=>a.name)},{headers:noStore});}catch{return Response.json({error:'Login kunne ikke hentes.'},{status:503,headers:noStore});}}
 export async function POST(request:Request){
  if(!sameOrigin(request))return Response.json({error:'Ugyldig forespørgsel.'},{status:403});
  try{
