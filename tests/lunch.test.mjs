@@ -177,18 +177,22 @@ test('fourth open week accepts its own menu and registration without changing an
 
 const auth=load('app/api/auth/route.ts');
 const accounts=load('app/api/accounts/route.ts');
-test('only admins create accounts, passwords stay hashed and duplicate creation cannot overwrite',async()=>{
- const body={action:'create',name:'New admin',email:'new@example.com',role:'admin',phone:'12 34 56 78',password:'Test12'};
+test('only admins create accounts and first login sets the password with a one-time code',async()=>{
+ const body={action:'create',name:'New admin',email:'new@example.com',role:'admin'};
  assert.equal((await accounts.GET(request(null,null))).status,403);
  assert.equal((await accounts.POST(request(body))).status,403);
- assert.equal((await accounts.POST(request({...body,password:'12345'},'mjo@din-energi.dk'))).status,400);
-
- assert.equal((await accounts.POST(request(body,'mjo@din-energi.dk'))).status,200);
- const row=sqlite.prepare('SELECT * FROM accounts WHERE email=?').get(body.email);
- assert.equal(row.role,'admin');assert.ok(await bcrypt.compare(body.password,row.password_hash));assert.notEqual(row.password_hash,body.password);
- const listed=await (await accounts.GET(request(null,'mjo@din-energi.dk'))).text();assert.ok(!listed.includes(row.password_hash));
+ const created=await accounts.POST(request(body,'mjo@din-energi.dk'));assert.equal(created.status,200);
+ const activationCode=(await created.json()).activationCode;assert.match(activationCode,/^[A-F0-9]{12}$/);
+ let row=sqlite.prepare('SELECT * FROM accounts WHERE email=?').get(body.email);
+ assert.equal(row.role,'admin');assert.equal(row.password_hash,'');
+ const stored=sqlite.prepare('SELECT hash FROM login_tokens WHERE email=?').get(body.email);assert.notEqual(stored.hash,activationCode);assert.equal(stored.hash,await server.hash(activationCode));
+ const listed=await (await accounts.GET(request(null,'mjo@din-energi.dk'))).text();assert.ok(!listed.includes(activationCode));
  assert.equal((await accounts.POST(request({...body,role:'employee'},'mjo@din-energi.dk'))).status,409);
  assert.equal(sqlite.prepare('SELECT role FROM accounts WHERE email=?').get(body.email).role,'admin');
+ assert.equal((await auth.POST(request({action:'setup',email:body.email,code:'000000000000',password:'Test12'},null))).status,400);
+ const setup=await auth.POST(request({action:'setup',email:body.email,code:activationCode.toLowerCase(),password:'Test12'},null));assert.equal(setup.status,200);assert.ok(setup.headers.get('set-cookie').includes('HttpOnly'));
+ row=sqlite.prepare('SELECT * FROM accounts WHERE email=?').get(body.email);assert.ok(await bcrypt.compare('Test12',row.password_hash));assert.equal(sqlite.prepare('SELECT COUNT(*) AS n FROM login_tokens WHERE email=?').get(body.email).n,0);
+ assert.equal((await auth.POST(request({action:'setup',email:body.email,code:activationCode,password:'Other12'},null))).status,400);
 });
 test('password login uses database role and logout revokes session',async()=>{
  const password='Fixture-password-123';
@@ -198,6 +202,14 @@ test('password login uses database role and logout revokes session',async()=>{
  const cookie=login.headers.get('set-cookie');assert.ok(cookie.includes('HttpOnly'));assert.ok(cookie.includes('Secure'));
  const req=new Request('https://lunch.test/api/auth',{headers:{cookie}});assert.equal((await server.user(req)).admin,false);
  const out=new Request(req.url,{method:'POST',headers:{cookie,origin:'https://lunch.test'},body:JSON.stringify({action:'logout'})});assert.equal((await auth.POST(out)).status,200);assert.equal(await server.user(req),null);
+});
+test('administrator can reset an employee password and receives a new one-time code',async()=>{
+ const email='forgotten@example.com';sqlite.prepare("INSERT INTO accounts(email,name,role,password_hash) VALUES(?,'Forgotten','employee',?)").run(email,await bcrypt.hash('OldPass',4));
+ sqlite.prepare("INSERT INTO sessions(hash,email,expires,auth_method) VALUES('old-session',?,?, 'password')").run(email,Clock.now()+60000);
+ const reset=await accounts.POST(request({action:'reset-access',email},'mjo@din-energi.dk'));assert.equal(reset.status,200);
+ const code=(await reset.json()).activationCode;assert.match(code,/^[A-F0-9]{12}$/);assert.equal(sqlite.prepare('SELECT password_hash FROM accounts WHERE email=?').get(email).password_hash,'');assert.equal(sqlite.prepare('SELECT COUNT(*) AS n FROM sessions WHERE email=?').get(email).n,0);
+ assert.equal((await auth.POST(request({action:'setup',email,code,password:'NewPass'},null))).status,200);
+ const lastAdmin=await accounts.POST(request({action:'reset-access',email:'mjo@din-energi.dk'},'mjo@din-energi.dk'));assert.equal(lastAdmin.status,409);
 });
 test('reset tokens expire, are single use and revoke existing sessions',async()=>{
  request(null,'reset@example.com');const token='a'.repeat(64),hashed=await server.hash(token);

@@ -31,3 +31,4 @@ input[type=password],select{border:1px solid var(--suf-border);background:#fff;b
 .startup-screen img{display:block;width:min(90vw,75vh,560px);height:auto;max-height:90dvh;object-fit:contain}
 .startup-content.waiting{visibility:hidden}
 .login-reminders{margin:18px 0 4px}.release-menu{margin:20px 0;padding:18px;border:2px solid var(--suf-turquoise);border-radius:16px;background:#eef9fa}.release-menu p{margin:0 0 12px}.release-menu .badge{display:inline-flex;margin-bottom:10px}.released-actions{display:flex;flex-wrap:wrap;gap:16px;margin:12px 0 0}.retry-notifications{margin:0}
+.activation-card{margin-top:20px;background:var(--suf-mint)}.activation-code code{display:inline-block;font-size:25px;font-weight:800;letter-spacing:3px;background:#fff;border:1px solid var(--suf-border);border-radius:9px;padding:12px 16px;color:var(--suf-ink)}

@@ -1,5 +1,5 @@
-import {database,user,sameOrigin} from '../../../lib/server';
-import {emailValue,validEmail,passwordError,passwordHash} from '../../../lib/passwords';
+import {database,user,sameOrigin,hash,secret} from '../../../lib/server';
+import {emailValue,validEmail} from '../../../lib/passwords';
 export async function GET(request:Request){
  try{
   if(!(await user(request))?.admin)return Response.json({error:'Kun administratorer har adgang.'},{status:403});
@@ -26,15 +26,38 @@ export async function POST(request:Request){
    if(!result[0].meta.changes)return Response.json({error:'Kontoen findes ikke, eller den er den sidste administrator med adgangskode og kan ikke fjernes.'},{status:409});
    return Response.json({success:true});
   }
+  if(body.action==='activation-code'){
+   if(!validEmail(email))return Response.json({error:'Vælg en gyldig konto.'},{status:400});
+   const code=secret().slice(0,12).toUpperCase(),codeHash=await hash(code),now=Date.now();
+   const result=await database().batch([
+    database().prepare("DELETE FROM login_tokens WHERE email=? AND EXISTS(SELECT 1 FROM accounts WHERE email=? AND enabled=1 AND password_hash='')").bind(email,email),
+    database().prepare("INSERT INTO login_tokens(hash,email,created,expires) SELECT ?,?,?,? WHERE EXISTS(SELECT 1 FROM accounts WHERE email=? AND enabled=1 AND password_hash='')").bind(codeHash,email,now,now+30*86400000,email)
+   ]);
+   if(!result[1].meta.changes)return Response.json({error:'Kontoen findes ikke eller har allerede en adgangskode.'},{status:409});
+   return Response.json({success:true,activationCode:code});
+  }
+  if(body.action==='reset-access'){
+   if(!validEmail(email))return Response.json({error:'Vælg en gyldig konto.'},{status:400});
+   const cleared=await database().prepare("UPDATE accounts SET password_hash='' WHERE email=? AND enabled=1 AND password_hash<>'' AND (role<>'admin' OR EXISTS(SELECT 1 FROM accounts other WHERE other.email<>? AND other.role='admin' AND other.enabled=1 AND other.password_hash<>''))").bind(email,email).run();
+   if(!cleared.meta.changes)return Response.json({error:'Kontoen findes ikke, afventer allerede første login eller er den sidste aktive administrator.'},{status:409});
+   const code=secret().slice(0,12).toUpperCase(),codeHash=await hash(code),now=Date.now();
+   await database().batch([
+    database().prepare('DELETE FROM sessions WHERE email=?').bind(email),
+    database().prepare('DELETE FROM login_tokens WHERE email=?').bind(email),
+    database().prepare('DELETE FROM password_resets WHERE email=?').bind(email),
+    database().prepare('INSERT INTO login_tokens(hash,email,created,expires) VALUES(?,?,?,?)').bind(codeHash,email,now,now+30*86400000)
+   ]);
+   return Response.json({success:true,activationCode:code});
+  }
   const name=typeof body.name==='string'?body.name.trim():'';
-  const problem=passwordError(body.password);
-  if(!validEmail(email)||!name||name.length>80||!['admin','employee'].includes(String(body.role))||problem)return Response.json({error:problem||'Udfyld navn, e-mail og en gyldig adgangstype.'},{status:400});
-  const hashed=await passwordHash(body.password as string);
-  const result=body.action==='activate'
-   ?await database().prepare("UPDATE accounts SET name=?,role=?,password_hash=? WHERE email=? AND password_hash='' AND enabled=1").bind(name,body.role,hashed,email).run()
-   :body.action==='create'?await database().prepare('INSERT INTO accounts(email,name,role,password_hash,reminders,enabled) VALUES(?,?,?,?,0,1) ON CONFLICT(email) DO NOTHING').bind(email,name,body.role,hashed).run():null;
-  if(!result)return Response.json({error:'Ukendt handling.'},{status:400});
-  if(!result.meta.changes)return Response.json({error:'Kontoen findes allerede eller har allerede en adgangskode.'},{status:409});
-  return Response.json({success:true});
+  if(body.action!=='create')return Response.json({error:'Ukendt handling.'},{status:400});
+  if(!validEmail(email)||!name||name.length>80||!['admin','employee'].includes(String(body.role)))return Response.json({error:'Udfyld navn, e-mail og en gyldig adgangstype.'},{status:400});
+  const code=secret().slice(0,12).toUpperCase(),codeHash=await hash(code),now=Date.now();
+  const result=await database().batch([
+   database().prepare("INSERT INTO accounts(email,name,role,password_hash,reminders,enabled) VALUES(?,?,?,'',0,1) ON CONFLICT(email) DO NOTHING").bind(email,name,body.role),
+   database().prepare('INSERT INTO login_tokens(hash,email,created,expires) SELECT ?,?,?,? WHERE changes()>0').bind(codeHash,email,now,now+30*86400000)
+  ]);
+  if(!result[0].meta.changes)return Response.json({error:'Kontoen findes allerede.'},{status:409});
+  return Response.json({success:true,activationCode:code});
  }catch{return Response.json({error:'Adgangen kunne ikke gemmes.'},{status:503});}
 }

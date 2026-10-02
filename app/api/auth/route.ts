@@ -13,6 +13,20 @@ export async function POST(request:Request){
   if(token)await database().prepare('DELETE FROM sessions WHERE hash=?').bind(await hash(token)).run();
   return Response.json({success:true},{headers:{...noStore,'Set-Cookie':sessionCookie(request,'',0)}});
  }
+ if(body.action==='setup'){
+  const email=emailValue(body.email),code=typeof body.code==='string'?body.code.trim().toUpperCase():'';
+  const problem=passwordError(body.password);
+  if(!validEmail(email)||!/^[A-F0-9]{12}$/.test(code)||problem)return Response.json({error:problem||'E-mail eller engangskode er ugyldig.'},{status:400});
+  if(!await allowedAttempt('setup',email,request))return Response.json({error:'For mange forsøg. Vent 15 minutter og prøv igen.'},{status:429});
+  const codeHash=await hash(code),newHash=await passwordHash(body.password as string),session=secret(),now=Date.now();
+  const result=await database().batch([
+   database().prepare("UPDATE accounts SET password_hash=? WHERE email=? AND enabled=1 AND password_hash='' AND EXISTS(SELECT 1 FROM login_tokens WHERE hash=? AND email=? AND expires>?)").bind(newHash,email,codeHash,email,now),
+   database().prepare("INSERT INTO sessions(hash,email,expires,auth_method) SELECT ?,?,?, 'password' WHERE changes()>0").bind(await hash(session),email,now+8*3600000),
+   database().prepare('DELETE FROM login_tokens WHERE email=? AND EXISTS(SELECT 1 FROM accounts WHERE email=? AND password_hash=?)').bind(email,email,newHash)
+  ]);
+  if(!result[0].meta.changes)return Response.json({error:'Engangskoden er forkert, udløbet eller allerede brugt.'},{status:400});
+  return Response.json({success:true},{headers:{...noStore,'Set-Cookie':sessionCookie(request,session)}});
+ }
  if(body.action==='login'){
   const email=emailValue(body.email);
   if(!validEmail(email)||typeof body.password!=='string'||body.password.length>200)return Response.json({error:'E-mail eller adgangskode er forkert.'},{status:401});
