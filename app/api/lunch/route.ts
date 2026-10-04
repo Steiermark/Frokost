@@ -27,20 +27,16 @@ export async function POST(request:Request) {
   if(!current)return Response.json({error:'Log ind først.'},{status:401});
   const body=await request.json() as Record<string,unknown>;
   const {date,meal,action}=body;
-  const name=typeof body.name==='string'?body.name.trim().replace(/\s+/g,' '):'';
+  const name=current.name.trim().replace(/\s+/g,' ');
 
   if(typeof date!=='string'||!availableFridays().includes(date)||!['join','decline'].includes(String(action)))return Response.json({error:'Vælg en kommende fredag og et svar.'},{status:400});
   if(isClosed(date))return Response.json({error:'Fristen var onsdag kl. 12. Tilmeldingen er lukket.'},{status:409});
-  if(!name||name.length>80)return Response.json({error:'Udfyld dit fulde navn.'},{status:400});
+  if(!name||name.length>80)return Response.json({error:'Din brugerkonto mangler et gyldigt navn. Kontakt en administrator.'},{status:400});
   if(action==='join'&&typeof meal!=='string')return Response.json({error:'Vælg en ret.'},{status:400});
   const status=action==='join'?'attending':'declined';
   const chosenMeal=action==='join'?meal as string:'';
-  // Validate the dish within the upsert. D1 commits the answer and profile atomically.
-  const result=await database().batch([
-   database().prepare("INSERT INTO registrations(id,date,name,normalized_name,meal,status) SELECT ?,?,?,?,?,? WHERE ?='declined' OR EXISTS(SELECT 1 FROM dishes d JOIN menus m ON m.date=d.date WHERE d.id=? AND d.date=? AND d.active=1 AND m.released=1) ON CONFLICT(date,normalized_name) DO UPDATE SET name=excluded.name,meal=excluded.meal,status=excluded.status").bind(crypto.randomUUID(),date,name,current.email,chosenMeal,status,status,chosenMeal,date),
-   database().prepare('UPDATE accounts SET name=? WHERE email=? AND changes()>0').bind(name,current.email)
-  ]);
-  if(!result[0].meta.changes)return Response.json({error:'Retten kan ikke længere vælges. Hent menuen igen.'},{status:409});
+  const result=await database().prepare("INSERT INTO registrations(id,date,name,normalized_name,meal,status) SELECT ?,?,?,?,?,? WHERE ?='declined' OR EXISTS(SELECT 1 FROM dishes d JOIN menus m ON m.date=d.date WHERE d.id=? AND d.date=? AND d.active=1 AND m.released=1) ON CONFLICT(date,normalized_name) DO UPDATE SET name=excluded.name,meal=excluded.meal,status=excluded.status").bind(crypto.randomUUID(),date,name,current.email,chosenMeal,status,status,chosenMeal,date).run();
+  if(!result.meta.changes)return Response.json({error:'Retten kan ikke længere vælges. Hent menuen igen.'},{status:409});
   return Response.json({success:true,status});
  }catch{return Response.json({error:'Ændringen kunne ikke gemmes. Prøv igen.'},{status:503});}
 }

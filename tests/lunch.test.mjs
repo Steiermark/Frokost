@@ -32,7 +32,8 @@ function request(body,email='employee@example.com',origin='https://lunch.test'){
  const headers={'content-type':'application/json',origin};
  if(email){
  const token=createHash('sha256').update('test-session-'+email).digest('hex');
- sqlite.prepare("INSERT INTO accounts(email,name,role,password_hash,reminders) VALUES(?,'',?,'test-hash',0) ON CONFLICT(email) DO NOTHING").run(email,email==='mjo@din-energi.dk'?'admin':'employee');
+ const accountName=email==='employee@example.com'?'Test Person':email==='mjo@din-energi.dk'?'Martin Johansen':email.split('@')[0];
+ sqlite.prepare("INSERT INTO accounts(email,name,role,password_hash,reminders) VALUES(?,?,?,'test-hash',0) ON CONFLICT(email) DO NOTHING").run(email,accountName,email==='mjo@din-energi.dk'?'admin':'employee');
  sqlite.prepare("INSERT INTO sessions(hash,email,expires,auth_method) VALUES(?,?,?,'password') ON CONFLICT(hash) DO UPDATE SET expires=excluded.expires").run(createHash('sha256').update(token).digest('hex'),email,Date.now()+86400000*500);
  headers.cookie='suf_password_session='+token;
 }
@@ -50,10 +51,9 @@ test('anonymous writes and cross-origin writes are rejected',async()=>{
  assert.equal((await lunch.POST(request(answer,null))).status,401);assert.equal((await lunch.POST(request(answer,'employee@example.com','https://other.test'))).status,403);
 });
 test('join persists without collecting a phone number',async()=>{
-
- assert.equal((await lunch.POST(request(answer))).status,200);
+ assert.equal((await lunch.POST(request({...answer,name:'Navn fra formular må ikke bruges'}))).status,200);
  
- const data=await (await lunch.GET(request())).json();assert.equal(data.registrations.length,1);assert.equal(data.mine.status,'attending');assert.equal(JSON.stringify(data).includes('+4512345678'),false);
+ const data=await (await lunch.GET(request())).json();assert.equal(data.registrations.length,1);assert.equal(data.registrations[0].name,'Test Person');assert.equal(data.mine.status,'attending');assert.equal(JSON.stringify(data).includes('+4512345678'),false);
 });
 test('decline replaces a join without duplicates and can change back',async()=>{
  await lunch.POST(request(answer));await lunch.POST(request({...answer,action:'decline'}));await lunch.POST(request({...answer,action:'decline'}));
