@@ -10,7 +10,7 @@ export function validEndpoint(endpoint:unknown):endpoint is string{
 }
 export function reminderFriday(now=new Date()){
  const local=copenhagenNow(now),date=fridays(now)[0];
- return local.slice(0,10)===deadline(date).slice(0,10)&&local.slice(11,13)==='11'?date:null;
+ return local.slice(0,10)===deadline(date).slice(0,10)&&local.slice(11,13)==='09'?date:null;
 }
 type Subscription={id:string;email:string;endpoint:string;p256dh:string;auth:string};
 type DeliveryOutcome={ok:boolean;status?:number;reason?:string};
@@ -69,7 +69,7 @@ export async function sendReminders(now=new Date(),dryRun=false){
   // Atomic claim checks the current choice again and prevents duplicate sends on overlapping jobs.
   const claim=await database().prepare("INSERT INTO push_deliveries(id,date,subscription,status,created) SELECT ?,?,?,'claimed',? WHERE EXISTS(SELECT 1 FROM push_subscriptions s JOIN accounts a ON a.email=s.email WHERE s.id=? AND a.enabled=1 AND a.password_hash<>'') AND NOT EXISTS(SELECT 1 FROM registrations WHERE normalized_name=? AND date=?) ON CONFLICT(date,subscription) DO NOTHING").bind(crypto.randomUUID(),date,row.id,Date.now(),row.id,row.email,date).run();
   if(!claim.meta.changes)continue;
-  const local=copenhagenNow(new Date());const ttl=Math.max(1,(60-Number(local.slice(14,16)))*60);
+  const local=copenhagenNow(new Date());const ttl=Math.max(1,((12-Number(local.slice(11,13)))*60-Number(local.slice(14,16)))*60);
   const outcome=await deliver(row,date,{title:'SUF · Fredagsfrokost',body:'Husk at vælge din ret eller melde afbud inden kl. 12 i dag.',date,tag:'lunch-'+date},ttl);
   if(outcome.ok)sent++;else failed++;
  }

@@ -272,12 +272,12 @@ test('push subscription requires login and origin; rejects arbitrary outbound en
  assert.equal(sqlite.prepare('SELECT COUNT(*) AS n FROM push_subscriptions').get().n,0);
 });
 test('push reminder follows Copenhagen summer/winter time and closes at noon',()=>{
- assert.equal(push.reminderFriday(new Date('2026-10-07T09:00:00Z')),'2026-10-09');
- assert.equal(push.reminderFriday(new Date('2026-10-28T10:00:00Z')),'2026-10-30');
- for(const time of ['2026-10-07T08:59:59Z','2026-10-07T10:00:00Z','2026-10-06T09:00:00Z'])assert.equal(push.reminderFriday(new Date(time)),null);
+ assert.equal(push.reminderFriday(new Date('2026-10-07T07:00:00Z')),'2026-10-09');
+ assert.equal(push.reminderFriday(new Date('2026-10-28T08:00:00Z')),'2026-10-30');
+ for(const time of ['2026-10-07T06:59:59Z','2026-10-07T08:00:00Z','2026-10-06T07:00:00Z'])assert.equal(push.reminderFriday(new Date(time)),null);
 });
 test('reminders only reach subscribed unanswered accounts, send encrypted payload once and expire dead endpoints',async()=>{
- now='2026-09-30T09:00:00Z';
+ now='2026-09-30T07:00:00Z';
  for(const email of ['waiting@example.com','joined@example.com','declined@example.com','dead@example.com']){
   assert.equal((await pushApi.POST(request({action:'subscribe',subscription:await subscription(email)},email))).status,200);
  }
